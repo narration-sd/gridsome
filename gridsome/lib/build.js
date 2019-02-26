@@ -3,13 +3,12 @@ const pMap = require('p-map')
 const fs = require('fs-extra')
 const hirestime = require('hirestime')
 const sysinfo = require('./utils/sysinfo')
-const { log, info } = require('./utils/log')
+const { log, error, info } = require('./utils/log')
 const { trimEnd, trimStart, chunk } = require('lodash')
 
 const createApp = require('./app')
 const { execute } = require('graphql')
 const { createWorker } = require('./workers')
-const compileAssets = require('./webpack/compileAssets')
 const { createBelongsToKey } = require('./graphql/nodes/utils')
 const { createFilterQuery } = require('./graphql/createFilterTypes')
 const { processPageQuery, contextValues } = require('./graphql/page-query')
@@ -33,7 +32,7 @@ module.exports = async (context, args) => {
   await renderPageQueries(queue, app)
 
   // 2. compile assets with webpack
-  await compileAssets(app)
+  await runWebpack(app)
 
   // 3. render a static index.html file for each possible route
   await app.dispatch('beforeRenderHTML', () => ({ context, config, queue }))
@@ -79,7 +78,10 @@ async function createRenderQueue ({ routes, config, store, schema }) {
     let fullPath = trimEnd(node.path, '/') || '/'
 
     if (page.type === NOT_FOUND_ROUTE) fullPath = '/404'
-    if (variables.page > 1) fullPath = `/${trimStart(fullPath, '/')}/${variables.page}`
+
+    if (variables.page > 1) {
+      fullPath = `/${trimStart(`${fullPath}/${variables.page}`, '/')}`
+    }
 
     const filePath = fullPath.split('/').map(decodeURIComponent).join('/')
     const dataPath = fullPath === '/' ? 'index.json' : `${filePath}.json`
@@ -93,8 +95,9 @@ async function createRenderQueue ({ routes, config, store, schema }) {
       dataOutput,
       htmlOutput,
       path: fullPath,
-      query,
-      variables
+      component: page.component,
+      variables,
+      query
     }
   }
 
@@ -123,9 +126,16 @@ async function createRenderQueue ({ routes, config, store, schema }) {
 
     switch (page.type) {
       case STATIC_ROUTE:
-      case NOT_FOUND_ROUTE:
-      case STATIC_TEMPLATE_ROUTE: {
+      case NOT_FOUND_ROUTE: {
         queue.push(createPage(page, pageQuery.query))
+
+        break
+      }
+
+      case STATIC_TEMPLATE_ROUTE: {
+        const node = store.getNodeByPath(page.path)
+        const variables = contextValues(node, pageQuery.variables)
+        queue.push(createEntry(node, page, pageQuery.query, variables))
 
         break
       }
@@ -190,16 +200,26 @@ async function createRenderQueue ({ routes, config, store, schema }) {
   return queue
 }
 
+async function runWebpack (app) {
+  if (!process.stdout.isTTY) {
+    info(`Compiling assets...`)
+  }
+
+  return require('./webpack/compileAssets')(app)
+}
+
 async function renderPageQueries (queue, app) {
   const timer = hirestime()
   const context = app.createSchemaContext()
   const pages = queue.filter(page => !!page.dataOutput)
 
-  await pMap(pages, async ({ dataOutput, query, variables, path }) => {
+  await pMap(pages, async ({ dataOutput, query, variables, component }) => {
     const results = await execute(app.schema, query, undefined, context, variables)
 
     if (results.errors) {
-      throw results.errors[0]
+      const relPath = path.relative(app.context, component)
+      error(`An error occurred while executing page-query for ${relPath}\n`)
+      throw new Error(results.errors[0])
     }
 
     await fs.outputFile(dataOutput, JSON.stringify(results))

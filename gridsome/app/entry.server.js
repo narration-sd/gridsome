@@ -4,16 +4,17 @@ runMain()
 
 export default context => new Promise((resolve, reject) => {
   const { app, router } = createApp()
-  let { url } = context
-
-  if (url === '/404') {
-    url = { name: '404' }
-  }
+  const location = context.url
   
   context.meta = app.$meta()
-  router.push(url)
 
-  router.onReady(() => {
+  router.push(location, () => {
+    const { matched: [match] } = app.$route
+
+    if (!match || (location !== '/404' && match.path === '*')) {
+      return reject(new Error(`Could not resolve ${context.url}`))
+    }
+
     resolve(app)
-  }, reject)
+  })
 })

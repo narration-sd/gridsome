@@ -1,8 +1,9 @@
 <template>
   <Layout>
     <h1>Blog</h1>
+    <span class="current-page">{{ $page.posts.pageInfo.currentPage }}</span>
     <ul>
-      <li v-for="{ node } in $page.posts.edges" :key="node.id">
+      <li v-for="{ node } in $page.posts.edges" :key="node.id" :class="`post-${node.id}`">
         <span>{{ node.title }}</span>
         <g-link :to="node.path">Read more</g-link>
       </li>

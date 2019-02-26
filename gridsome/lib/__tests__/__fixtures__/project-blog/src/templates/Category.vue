@@ -1,9 +1,9 @@
 <template>
   <div>
-    <h1>{{ $page.category.title }}</h1>
+    <h1 class="category-title">{{ $page.category.title }}</h1>
     <ul>
-      <li v-for="{ node } in $page.category.belongsTo.edges" :key="node.id">
-        {{ node.title }}
+      <li v-for="{ node } in $page.category.belongsTo.edges" :key="node.id" :class="`post-${node.id}`">
+        <span>{{ node.title }}</span>
       </li>
     </ul>
     <Pager :info="$page.category.belongsTo.pageInfo"/>
@@ -11,8 +11,8 @@
 </template>
 
 <page-query>
-query Tag ($path: String!, $page: Int, $showType: String) {
-  category (path: $path) {
+query Tag ($id: String!, $page: Int, $showType: String) {
+  category (id: $id) {
     title
     belongsTo (
       perPage: 2,
