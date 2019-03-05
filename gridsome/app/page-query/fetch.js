@@ -1,16 +1,15 @@
 /* global GRIDSOME_MODE, GRIDSOME_DATA_DIR */
 
 import router from '../router'
-import config from '~/.temp/config'
 import { setResults } from './shared'
 import { unslash } from '../utils/helpers'
-
-const re = new RegExp(`^${config.pathPrefix}`)
+import { NOT_FOUND_NAME, NOT_FOUND_PATH } from '../utils/constants'
 
 export default (route, query) => {
   if (GRIDSOME_MODE === 'serve') {
     const { page, ...params } = route.params
     const { location } = router.resolve({ ...route, params })
+    const path = location.path || '/'
 
     return new Promise((resolve, reject) => {
       fetch(process.env.GRAPHQL_ENDPOINT, {
@@ -19,7 +18,9 @@ export default (route, query) => {
         body: JSON.stringify({
           variables: {
             page: page ? Number(page) : null,
-            path: location.path || route.path
+            path: route.name === NOT_FOUND_NAME
+              ? NOT_FOUND_PATH
+              : path
           },
           query
         })
@@ -27,6 +28,7 @@ export default (route, query) => {
         .then(res => res.json())
         .then(res => {
           if (res.errors) reject(res.errors[0])
+          else if (!res.data) resolve(res)
           else setResults(route.path, res.data) && resolve(res)
         })
         .catch(err => {
@@ -35,10 +37,11 @@ export default (route, query) => {
     })
   } else if (GRIDSOME_MODE === 'static') {
     return new Promise((resolve, reject) => {
-      const routePath = unslash(route.path.replace(re, '/'))
-      const filename = !routePath ? '/index.json' : `/${routePath}.json`
+      const { name, meta: { isIndex }} = route
+      const path = unslash(name === NOT_FOUND_NAME ? NOT_FOUND_PATH : route.path)
+      const jsonPath = unslash(isIndex === false ? `${path}.json` : `${path}/index.json`)
 
-      import(/* webpackChunkName: "data/" */ `${GRIDSOME_DATA_DIR}${filename}`)
+      import(/* webpackChunkName: "data/" */ `${GRIDSOME_DATA_DIR}/${jsonPath}`)
         .then(res => {
           if (res.errors) reject(res.errors[0])
           else (setResults(route.path, res.data), resolve(res))

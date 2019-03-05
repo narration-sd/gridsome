@@ -1,5 +1,5 @@
 <template>
-  <Layout>
+  <Layout class="home">
     <h1>Gridsome</h1>
     <h2 class="meta-data">{{ $page.metaData.myTest.value }}</h2>
     
@@ -8,6 +8,7 @@
     <g-link href="//outsidelink3.com">External Links</g-link>
     <g-link href="https://www.gridsome.org/docs">Internal Links</g-link>
     <g-link :class="{ 'g-link-2': true }" :to="{ name: 'home' }" active-class="test-active">Home</g-link>
+    <g-link class="not-found-link" to="/asdf">Show /404</g-link>
     <g-link class="g-link-file" to="~/assets/dummy.pdf">Download</g-link>
     
     <g-image class="g-image-1" src="~/assets/logo.svg" alt="SVG logo" width="300" />
@@ -21,6 +22,14 @@
     <span class="from-plugin">{{ TEST_2 }}</span>
     <span class="from-chain-webpack">{{ TEST_3 }}</span>
 
+    <ul>
+      <li v-for="edge in $page.allTestDoc.edges" :key="edge.node.id">
+        <g-link :to="edge.node.path" :class="`doc-link-${edge.node.id}`">
+          {{ edge.node.title }}
+        </g-link>
+      </li>
+    </ul>
+
     <g-image />
     <g-link />
   </Layout>
@@ -32,6 +41,15 @@ query Home {
   metaData {
     myTest {
       value
+    }
+  }
+  allTestDoc {
+    edges {
+      node {
+        id
+        title
+        path
+      }
     }
   }
 }
@@ -70,3 +88,9 @@ export default {
   }
 }
 </script>
+
+<style>
+.is-mounted {
+  background-color: #f2f2f2;
+}
+</style>

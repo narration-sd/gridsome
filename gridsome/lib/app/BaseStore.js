@@ -1,6 +1,6 @@
 const Loki = require('lokijs')
 const autoBind = require('auto-bind')
-const { uniqBy, isArray, isPlainObject } = require('lodash')
+const { omit, isArray, isPlainObject } = require('lodash')
 const ContentTypeCollection = require('./ContentTypeCollection')
 
 class BaseStore {
@@ -9,6 +9,9 @@ class BaseStore {
     this.data = new Loki()
     this.collections = {}
     this.taxonomies = {}
+    this.lastUpdate = null
+
+    this.setUpdateTime()
 
     autoBind(this)
 
@@ -69,17 +72,11 @@ class BaseStore {
   }
 
   chainIndex (query = {}) {
-    let chain = this.index.chain().find(query)
-    const typeNames = uniqBy(chain.data(), 'typeName').map(entry => entry.typeName)
-    const joinMapper = (left, right) => ({ ...left, ...right })
-    const joinOptions = { removeMeta: true }
-
-    for (let i = 0, l = typeNames.length; i < l; i++) {
-      const { collection } = this.getContentType(typeNames[i])
-      chain = chain.eqJoin(collection, 'uid', 'uid', joinMapper, joinOptions)
-    }
-
-    return chain
+    return this.index.chain().find(query).map(entry => {
+      const type = this.collections[entry.typeName]
+      const node = type.collection.by('id', entry.id)
+      return omit(node, '$loki')
+    })
   }
 
   // pages
@@ -94,6 +91,12 @@ class BaseStore {
 
   removePage (id) {
     return this.pages.findAndRemove({ id })
+  }
+
+  // utils
+
+  setUpdateTime () {
+    this.lastUpdate = Date.now()
   }
 }
 

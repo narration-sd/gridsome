@@ -1,10 +1,11 @@
 const path = require('path')
 const pMap = require('p-map')
 const fs = require('fs-extra')
+const { chunk } = require('lodash')
 const hirestime = require('hirestime')
+const { createPath } = require('./utils')
 const sysinfo = require('./utils/sysinfo')
 const { log, error, info } = require('./utils/log')
-const { trimEnd, trimStart, chunk } = require('lodash')
 
 const createApp = require('./app')
 const { execute } = require('graphql')
@@ -22,7 +23,7 @@ module.exports = async (context, args) => {
   const { config } = app
 
   await app.dispatch('beforeBuild', { context, config })
-  await fs.ensureDir(config.cacheDir)
+  await fs.ensureDir(config.dataDir)
   await fs.remove(config.outDir)
 
   const queue = await createRenderQueue(app)
@@ -50,8 +51,8 @@ module.exports = async (context, args) => {
 
   // 6. clean up
   await app.dispatch('afterBuild', () => ({ context, config, queue }))
-  await fs.remove(path.resolve(config.cacheDir, 'data'))
   await fs.remove(config.manifestsDir)
+  await fs.remove(config.dataDir)
 
   log()
   log(`  Done in ${buildTime(hirestime.S)}s`)
@@ -75,40 +76,16 @@ async function createRenderQueue ({ routes, config, store, schema }) {
   const rootFields = schema.getQueryType().getFields()
 
   const createEntry = (node, page, query, variables = { page: 1 }) => {
-    let fullPath = trimEnd(node.path, '/') || '/'
-
-    if (page.type === NOT_FOUND_ROUTE) fullPath = '/404'
-
-    if (variables.page > 1) {
-      fullPath = `/${trimStart(`${fullPath}/${variables.page}`, '/')}`
-    }
-
-    const filePath = fullPath.split('/').map(decodeURIComponent).join('/')
-    const dataPath = fullPath === '/' ? 'index.json' : `${filePath}.json`
-
-    const htmlOutput = path.join(config.outDir, filePath, 'index.html')
-    const dataOutput = query ? path.join(config.cacheDir, 'data', dataPath) : null
-
-    variables.path = node.path
+    const path = createPath(node.path, variables.page, page.isIndex)
 
     return {
-      dataOutput,
-      htmlOutput,
-      path: fullPath,
+      path: path.toUrlPath(),
+      htmlOutput: path.toFilePath(config.outDir, 'html'),
+      dataOutput: query ? path.toFilePath(config.dataDir, 'json') : null,
+      variables: { ...variables, path: node.path },
       component: page.component,
-      variables,
       query
     }
-  }
-
-  const createPage = (page, query, vars) => {
-    const entry = createEntry(page, page, query, vars)
-
-    if (page.directoryIndex === false && page.path !== '/') {
-      entry.htmlOutput = `${path.dirname(entry.htmlOutput)}.html`
-    }
-
-    return entry
   }
 
   const queue = []
@@ -127,7 +104,7 @@ async function createRenderQueue ({ routes, config, store, schema }) {
     switch (page.type) {
       case STATIC_ROUTE:
       case NOT_FOUND_ROUTE: {
-        queue.push(createPage(page, pageQuery.query))
+        queue.push(createEntry(page, page, pageQuery.query))
 
         break
       }
@@ -142,11 +119,13 @@ async function createRenderQueue ({ routes, config, store, schema }) {
 
       case DYNAMIC_TEMPLATE_ROUTE: {
         const { collection } = store.getContentType(page.typeName)
+        const nodes = collection.find()
+        const length = nodes.length
 
-        collection.find().forEach(node => {
-          const variables = contextValues(node, pageQuery.variables)
-          queue.push(createEntry(node, page, pageQuery.query, variables))
-        })
+        for (let i = 0; i < length; i++) {
+          const variables = contextValues(nodes[i], pageQuery.variables)
+          queue.push(createEntry(nodes[i], page, pageQuery.query, variables))
+        }
 
         break
       }
@@ -157,8 +136,11 @@ async function createRenderQueue ({ routes, config, store, schema }) {
         const filter = belongsTo.args.find(arg => arg.name === 'filter')
         const fields = filter.type.getFields()
         const { collection } = store.getContentType(page.typeName)
+        const nodes = collection.find()
+        const length = nodes.length
 
-        collection.find().forEach(node => {
+        for (let i = 0; i < length; i++) {
+          const node = nodes[i]
           const variables = contextValues(node, pageQuery.variables)
           const filters = pageQuery.getFilters(variables)
           const perPage = pageQuery.getPerPage(variables)
@@ -171,7 +153,7 @@ async function createRenderQueue ({ routes, config, store, schema }) {
           for (let i = 1; i <= totalPages; i++) {
             queue.push(createEntry(node, page, pageQuery.query, { ...variables, page: i }))
           }
-        })
+        }
 
         break
       }
@@ -189,7 +171,7 @@ async function createRenderQueue ({ routes, config, store, schema }) {
         const totalPages = Math.ceil(totalNodes / perPage) || 1
 
         for (let i = 1; i <= totalPages; i++) {
-          queue.push(createPage(page, pageQuery.query, { page: i }))
+          queue.push(createEntry(page, page, pageQuery.query, { page: i }))
         }
 
         break
@@ -201,11 +183,19 @@ async function createRenderQueue ({ routes, config, store, schema }) {
 }
 
 async function runWebpack (app) {
+  const compileTime = hirestime()
+
   if (!process.stdout.isTTY) {
     info(`Compiling assets...`)
   }
 
-  return require('./webpack/compileAssets')(app)
+  const stats = await require('./webpack/compileAssets')(app)
+
+  if (app.config.css.split !== true) {
+    await removeStylesJsChunk(stats, app.config.outDir)
+  }
+
+  info(`Compile assets - ${compileTime(hirestime.S)}s`)
 }
 
 async function renderPageQueries (queue, app) {
@@ -296,4 +286,23 @@ async function processImages (queue, config) {
   worker.end()
 
   info(`Process images (${totalAssets} images) - ${timer(hirestime.S)}s`)
+}
+
+// borrowed from vuepress/core/lib/build.js
+// webpack fails silently in some cases, appends styles.js to app.js to fix it
+// https://github.com/webpack-contrib/mini-css-extract-plugin/issues/85
+async function removeStylesJsChunk (stats, outDir) {
+  const { children: [child] } = stats
+  const styleChunk = child.assets.find(a => /styles(\.\w{8})?\.js$/.test(a.name))
+  const appChunk = child.assets.find(a => /app(\.\w{8})?\.js$/.test(a.name))
+
+  if (!styleChunk) return
+
+  const styleChunkPath = path.join(outDir, styleChunk.name)
+  const styleChunkContent = await fs.readFile(styleChunkPath, 'utf-8')
+  const appChunkPath = path.join(outDir, appChunk.name)
+  const appChunkContent = await fs.readFile(appChunkPath, 'utf-8')
+
+  await fs.remove(styleChunkPath)
+  await fs.writeFile(appChunkPath, styleChunkContent + appChunkContent)
 }
