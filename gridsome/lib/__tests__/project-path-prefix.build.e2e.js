@@ -34,7 +34,12 @@ afterAll(async () => {
   await fs.remove(path.join(context, 'dist'))
   await fs.remove(path.join(context, 'public'))
   await fs.remove(path.join(context, 'src', '.temp'))
+  await fs.remove(path.join(context, 'node_modules', '.cache'))
   await fs.remove(path.join(context, '.cache'))
+})
+
+test('normalize pathPrefix', () => {
+  expect(pathPrefix).toEqual('/sub/-/dir/')
 })
 
 test('include pathPrefix in asset URLs', () => {
@@ -80,7 +85,7 @@ test('navigate to /', async () => {
 })
 
 test('open /about/ directly', async () => {
-  await page.goto(`http://localhost:8080${pathPrefix}/about/`, { waitUntil: 'networkidle2' })
+  await page.goto(`http://localhost:8080${pathPrefix}about/`, { waitUntil: 'networkidle2' })
   await page.waitForSelector('#app.is-mounted')
 })
 
