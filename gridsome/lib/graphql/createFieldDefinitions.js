@@ -1,35 +1,54 @@
 const { omit, isPlainObject, isNumber, isInteger } = require('lodash')
-const { isRefField, isRefFieldDefinition } = require('./utils')
+const { isRefFieldDefinition } = require('./utils')
+const { isRefField } = require('../store/utils')
+const { warn } = require('../utils/log')
+const camelCase = require('camelcase')
 
-const exclude = ['$uid', '$loki', 'typeName', 'id', 'internal']
-
-module.exports = function createFieldDefinitions (nodes) {
-  let fields = {}
+module.exports = function createFieldDefinitions (nodes, options = {}) {
+  let res = {}
 
   for (let i = 0, l = nodes.length; i < l; i++) {
-    fields = fieldValues(omit(nodes[i], exclude), fields)
-  }
-
-  return fields
-}
-
-function fieldValues (obj, currentObj = {}) {
-  const res = { ...currentObj }
-
-  for (const key in obj) {
-    const value = obj[key]
-
-    if (key.startsWith('__')) continue
-    if (value === undefined) continue
-    if (value === null) continue
-
-    res[key] = fieldValue(value, currentObj[key])
+    const fields = omit(nodes[i], ['internal'])
+    res = resolveValues(fields, res, options)
   }
 
   return res
 }
 
-function fieldValue (value, currentValue) {
+function resolveValues (obj, currentObj = {}, options = {}, path = []) {
+  const res = { ...currentObj }
+
+  for (const key in obj) {
+    const value = obj[key]
+
+    if (key.startsWith('$')) continue
+    if (key.startsWith('__')) continue
+    if (value === undefined) continue
+    if (value === null) continue
+
+    const fieldName = createFieldName(key, options.camelCase)
+    const currentValue = currentObj[key] ? currentObj[key].value : undefined
+    const resolvedValue = resolveValue(value, currentValue, options, path.concat(key))
+    const extensions = { isInferred: true }
+
+    if (fieldName !== key) {
+      extensions.proxy = {
+        from: key
+      }
+    }
+
+    res[key] = {
+      key,
+      fieldName,
+      extensions,
+      value: resolvedValue
+    }
+  }
+
+  return res
+}
+
+function resolveValue (value, currentValue, options, path = []) {
   if (Array.isArray(value)) {
     const arr = Array.isArray(currentValue) ? currentValue : []
     const length = value.length
@@ -40,7 +59,9 @@ function fieldValue (value, currentValue) {
       }
 
       for (let i = 0; i < length; i++) {
-        if (!currentValue.typeName.includes(value[i].typeName)) {
+        if (!value[i].typeName) {
+          warn(`Missing typeName for reference at: ${path.join('.')}.${i}`)
+        } else if (!currentValue.typeName.includes(value[i].typeName)) {
           currentValue.typeName.push(value[i].typeName)
         }
       }
@@ -53,19 +74,24 @@ function fieldValue (value, currentValue) {
     }
 
     for (let i = 0; i < length; i++) {
-      arr[0] = fieldValue(value[i], arr[0])
+      arr[0] = resolveValue(value[i], arr[0], options, path.concat(i))
     }
 
     return arr
   } else if (isPlainObject(value)) {
     if (isRefField(value)) {
+      if (!value.typeName) {
+        warn(`Missing typeName for reference in field: ${path.join('.')}`)
+        return currentValue
+      }
+
       const ref = currentValue || { typeName: value.typeName }
       ref.isList = ref.isList || Array.isArray(value.id)
 
       return ref
     }
 
-    return fieldValues(value, currentValue)
+    return resolveValues(value, currentValue, options, path)
   } else if (isNumber(value)) {
     return isNumber(currentValue) && isInteger(value)
       ? currentValue
@@ -73,4 +99,15 @@ function fieldValue (value, currentValue) {
   }
 
   return currentValue !== undefined ? currentValue : value
+}
+
+const nonValidCharsRE = new RegExp('[^a-zA-Z0-9_]', 'g')
+const leadingNumberRE = new RegExp('^([0-9])')
+
+function createFieldName (key, camelCased = false) {
+  key = key.replace(nonValidCharsRE, '_')
+  if (camelCased) key = camelCase(key)
+  key = key.replace(leadingNumberRE, '_$1')
+
+  return key
 }

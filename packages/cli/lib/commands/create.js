@@ -7,7 +7,7 @@ const sortPackageJson = require('sort-package-json')
 const { hasYarn } = require('../utils')
 
 module.exports = async (name, starter = 'default') => {
-  const dir = aboslutePath(name)
+  const dir = absolutePath(name)
   const projectName = path.basename(dir)
   const starters = ['default', 'wordpress']
   const useYarn = await hasYarn()
@@ -21,7 +21,9 @@ module.exports = async (name, starter = 'default') => {
     throw new Error(err.message)
   }
 
-  if (starters.includes(starter)) {
+  if (/^([a-z0-9_-]+)\//i.test(starter)) {
+    starter = `https://github.com/${starter}.git`
+  } else if (starters.includes(starter)) {
     starter = `https://github.com/gridsome/gridsome-starter-${starter}.git`
   }
 
@@ -114,11 +116,7 @@ module.exports = async (name, starter = 'default') => {
     }
   ])
 
-  try {
-    await tasks.run()
-  } catch (err) {
-    throw err
-  }
+  await tasks.run()
 
   console.log()
   if (process.cwd() !== dir) {
@@ -144,7 +142,7 @@ function exec (cmd, args = [], options = {}, context = process.cwd()) {
   })
 }
 
-function aboslutePath (string) {
+function absolutePath (string) {
   if (path.isAbsolute(string)) return string
   return path.join(process.cwd(), string)
 }

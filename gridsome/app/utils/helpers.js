@@ -17,13 +17,36 @@ export function url (string) {
 }
 
 export function stripPageParam (route) {
-  return route.params.page && /^\d+$/.test(route.params.page)
-    ? route.path.split('/').slice(0, -1).join('/') || '/'
-    : unslashEnd(route.path) || '/'
+  const { path, params: { page }} = route
+  const normalizedPath = unslashEnd(path)
+
+  return page && /^\d+$/.test(page) && /\/\d+$/.test(normalizedPath)
+    ? normalizedPath.split('/').slice(0, -1).join('/') || '/'
+    : normalizedPath || '/'
 }
 
 const re = new RegExp(`^${publicPath}`)
 const replacement = publicPath !== '/' ? '' : '/'
 export function stripPathPrefix (string) {
   return string.replace(re, replacement)
+}
+
+export function parsePath (path) {
+  let pathname = path || '/'
+  let query = ''
+  let hash = ''
+
+  ;[pathname, hash = ''] = path.split('#')
+  ;[pathname, query = ''] = pathname.split('?')
+
+  return {
+    pathname,
+    query: query ? `?${query}` : '',
+    hash: hash ? `#${hash}` : ''
+  }
+}
+
+export function normalizePath (path = '/') {
+  // TODO: warn if path misses a leading slash
+  return `/${unslashStart(path)}`.replace(/\/+/g, '/')
 }
