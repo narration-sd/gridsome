@@ -2,10 +2,12 @@ import './polyfills'
 
 import Vue from 'vue'
 import createApp, { runPlugins, runMain } from './app'
+import config from '~/.temp/config'
 import plugins from '~/.temp/plugins-client'
 import linkDirective from './directives/link'
 import imageDirective from './directives/image'
 import { stripPathPrefix } from './utils/helpers'
+import { isFunc, isNil } from './utils/lang'
 
 Vue.directive('g-link', linkDirective)
 Vue.directive('g-image', imageDirective)
@@ -18,7 +20,7 @@ const { app, router } = createApp()
 if (process.env.NODE_ENV === 'production') {
   router.beforeEach((to, from, next) => {
     const components = router.getMatchedComponents(to).map(
-      c => typeof c === 'function' ? c() : c
+      c => isFunc(c) && isNil(c.cid) ? c() : c
     )
 
     Promise.all(components)
@@ -34,6 +36,7 @@ if (process.env.NODE_ENV === 'production') {
   })
 }
 
+// TODO: remove this behavior
 // let Vue router handle internal URLs for anchors in innerHTML
 document.addEventListener('click', event => {
   const $el = event.target.closest('a')
@@ -54,6 +57,13 @@ document.addEventListener('click', event => {
     /\b_blank\b/i.test($el.target) // opens in new tab
   ) return
 
+  if (
+    config.pathPrefix &&
+    !$el.pathname.startsWith(config.pathPrefix)
+  ) {
+    return // must include pathPrefix in path
+  }
+
   const path = stripPathPrefix($el.pathname)
   const { route, location } = router.resolve({
     path: path + ($el.search || '') + ($el.hash || '')
@@ -63,7 +73,7 @@ document.addEventListener('click', event => {
     return
   }
 
-  router.push(location)
+  router.push(location, () => {})
   event.preventDefault()
 }, false)
 

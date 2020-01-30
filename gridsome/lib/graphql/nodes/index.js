@@ -8,6 +8,14 @@ const { createFieldTypes } = require('../createFieldTypes')
 const { isRefFieldDefinition, createTypeName } = require('../utils')
 const { isRefField } = require('../../store/utils')
 
+const {
+  ObjectTypeComposer,
+  NonNullComposer,
+  ThunkComposer,
+  ListComposer,
+  unwrapTC
+} = require('graphql-compose')
+
 const { omit, mapValues, isEmpty, isPlainObject } = require('lodash')
 
 module.exports = function createNodesSchema (schemaComposer, store) {
@@ -99,6 +107,8 @@ function createTypeComposers (schemaComposer, store) {
     typeComposer.setIsTypeOf(node =>
       node.internal && node.internal.typeName === typeName
     )
+
+    typeComposer.setField('id', 'ID!')
   }
 }
 
@@ -107,15 +117,7 @@ function createFields (schemaComposer, typeComposer, collection) {
   const fieldDefs = inferFields(typeComposer, collection)
   const fieldTypes = createFieldTypes(schemaComposer, fieldDefs, typeName)
 
-  processInferredFields(typeComposer, fieldDefs, fieldTypes)
-
-  for (const fieldName in fieldTypes) {
-    if (!typeComposer.hasField(fieldName)) {
-      typeComposer.setField(fieldName, fieldTypes[fieldName])
-    }
-  }
-
-  typeComposer.setField('id', 'ID!')
+  addInferredFields(typeComposer, fieldDefs, fieldTypes)
 }
 
 function inferFields (typeComposer, collection) {
@@ -131,17 +133,33 @@ function inferFields (typeComposer, collection) {
   })
 }
 
-function processInferredFields (typeComposer, fieldDefs, fieldTypes) {
+function addInferredFields (typeComposer, fieldDefs, fieldTypes) {
   for (const key in fieldDefs) {
     const options = fieldDefs[key]
     const fieldType = fieldTypes[options.fieldName]
 
-    if (!fieldType) continue
+    if (!typeComposer.hasField(options.fieldName)) {
+      typeComposer.setField(options.fieldName, fieldType)
+      typeComposer.setFieldExtensions(options.fieldName, options.extensions)
 
-    fieldType.extensions = options.extensions
+      if (isPlainObject(options.value) && !isRefFieldDefinition(options.value)) {
+        addFieldExtensions(typeComposer, options.fieldName, options.value)
+      }
+    }
+  }
+}
 
-    if (isPlainObject(options.value) && !isRefFieldDefinition(options.value)) {
-      processInferredFields(typeComposer, options.value, fieldType.type.getFields())
+function addFieldExtensions (typeComposer, fieldName, fieldDefs) {
+  const fieldTypeComposer = typeComposer.getFieldTC(fieldName)
+
+  if (fieldTypeComposer instanceof ObjectTypeComposer) {
+    for (const key in fieldDefs) {
+      const { fieldName, extensions, value } = fieldDefs[key]
+      fieldTypeComposer.extendFieldExtensions(fieldName, extensions)
+
+      if (isPlainObject(value) && !isRefFieldDefinition(value)) {
+        addFieldExtensions(fieldTypeComposer, fieldName, value)
+      }
     }
   }
 }
@@ -166,7 +184,14 @@ function createThirdPartyFields (typeComposer, collection) {
     }
   }
 
-  typeComposer.addFields(fields)
+  for (const fieldName in fields) {
+    const extensions = typeComposer.hasField(fieldName)
+      ? typeComposer.getFieldExtensions(fieldName)
+      : {}
+
+    typeComposer.setField(fieldName, fields[fieldName])
+    typeComposer.extendFieldExtensions(fieldName, extensions)
+  }
 }
 
 const {
@@ -277,11 +302,21 @@ function createReferenceFields (schemaComposer, typeComposer, collection) {
           : createReferenceOneUnionResolver(typeName)
       }
     } else {
-      const otherTypeComposer = schemaComposer.get(typeName)
-
-      return isList
+      const { typeMapper } = schemaComposer
+      const refTypeComposer = typeMapper.convertSDLWrappedTypeName(typeName)
+      const otherTypeComposer = unwrapTC(refTypeComposer)
+      const resolver = isList || isListTC(refTypeComposer)
         ? otherTypeComposer.getResolver('referenceManyAdvanced')
         : otherTypeComposer.getResolver('referenceOne')
+
+      const clonedResolver = resolver.clone()
+
+      // TODO: warn if inferred field type is a list but the typeName is not.
+      if (!isList && typeComposer.hasField(fieldName)) {
+        clonedResolver.setType(refTypeComposer)
+      }
+
+      return clonedResolver
     }
   })
 
@@ -292,6 +327,17 @@ function createReferenceFields (schemaComposer, typeComposer, collection) {
       typeComposer.extendFieldExtensions(fieldName, extensions)
     }
   })
+}
+
+function isListTC (anyTC) {
+  if (
+    anyTC instanceof NonNullComposer ||
+    anyTC instanceof ThunkComposer
+  ) {
+    return isListTC(anyTC.ofType)
+  }
+
+  return anyTC instanceof ListComposer
 }
 
 function createReferenceManyUnionResolver (typeNames) {
