@@ -203,6 +203,7 @@ class Pages {
 
   removePage (id) {
     const page = this.getPage(id)
+    if (!page) return
     const route = this.getRoute(page.internal.route)
 
     if (route.internal.isDynamic) {
@@ -230,6 +231,22 @@ class Pages {
       .forEach(options => {
         this.removeRoute(options.id)
       })
+  }
+  
+  findAndRemovePages (query) {
+    this._pages.find(query).forEach(page => {
+      this.removePage(page.id)
+    })
+  }
+
+  findPages (query) {
+    const matchingPages = this._pages.find(query)
+    return matchingPages
+  }
+
+  findPage (query) {
+    const [ matchingPage ] = this._pages.find(query)
+    return matchingPage
   }
 
   getRoute (id) {
